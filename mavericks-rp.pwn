@@ -19,6 +19,8 @@
 #define DIALOG_NONE                             (0)
 #define DIALOG_REGISTER                         (1)
 #define DIALOG_LOGIN                            (8)
+#define D_ENTERHOUSE                            (10)
+#define D_BUYHOUSE                              (11)
 
 #define MAX_WEAPON_SLOT                         (6)
 
@@ -52,6 +54,21 @@
 #define fixKick(%0) 							SetTimerEx("OnPlayerKick", 100, false, "i", %0)
 #define Kick(%0)								fixKick(%0)
 #define SetPlayerPos(%0,%1,%2,%3,%4)			fixSetPlayerPos(%0, %1, %2, %3, %4)
+#define MAX_HOUSES 100
+
+enum houseinfo
+{
+	id,
+	owner[24],
+	price,
+	interior,
+	Float:hx,
+	Float:hy,
+	Float:hz,
+	pickup,
+	lock,
+};
+new house[MAX_HOUSES][houseinfo];
 
 enum pvar
 {
@@ -69,12 +86,54 @@ new mysql;
 
 new player[MAX_PLAYERS][pvar];
 new player_weapons[MAX_PLAYERS][MAX_WEAPON_SLOT][2];
+new hIcon[MAX_HOUSES];
+new hPickup[MAX_HOUSES];
+new SellToWho[MAX_HOUSES];
 
 forward OnPlayerVerification(playerid);
 forward OnPlayerLogin(playerid);
 forward OnPlayerKick(playerid);
 forward OnPlayerLoadWeapons(playerid);
 forward OnPlayerUpdateWeapons(playerid);
+forward OnLoadHouse(houseid);
+forward SellHouse(playerid);
+
+
+public OnLoadHouse(houseid)
+{
+	if(cache_get_row_count(mysql))
+	{
+ 		house[houseid][id] = cache_get_field_content_int(0, "id", mysql);
+        cache_get_field_content(0, "owner", house[houseid][owner], mysql, 24);
+        house[houseid][price] = cache_get_field_content_int(0, "price", mysql);
+        house[houseid][interior] = cache_get_field_content_int(0, "interior", mysql);
+        house[houseid][hx] = cache_get_field_content_float(0, "hx", mysql);
+        house[houseid][hy] = cache_get_field_content_float(0, "hy", mysql);
+        house[houseid][hz] = cache_get_field_content_float(0, "hz", mysql);
+        house[houseid][pickup] = cache_get_field_content_int(0, "pickup", mysql);
+        house[houseid][lock] = cache_get_field_content_int(0, "lock", mysql);
+        hIcon[houseid] = CreateDynamicMapIcon(house[houseid][hx], house[houseid][hy], house[houseid][hz], 31, -1, 0 , 0, -1, 100.0);
+		if(!strcmp(house[houseid][owner], "no-one"))
+		{
+  		hPickup[houseid] = CreateDynamicPickup(1242, 1,house[houseid][hx], house[houseid][hy], house[houseid][hz], -1);
+		}
+		else
+		{
+		hPickup[houseid] = CreateDynamicPickup(1243, 1,house[houseid][hx], house[houseid][hy], house[houseid][hz], -1);
+		}
+   	}
+        
+}
+
+LoadHouses()
+{
+	for(new i; i < MAX_HOUSES; i++)
+	{
+	mysql_format(mysql, query, sizeof(query), "SELECT * FROM houses WHERE id = '%i", i);
+	mysql_function_query(mysql, query, true, "OnLoadHouse", "i", houseid);
+	}
+}
+
 
 SavePlayer(playerid)
 {
@@ -199,9 +258,29 @@ public OnPlayerText(playerid, text[])
 
 public OnPlayerCommandText(playerid, cmdtext[])
 {
-	return 0;
+	if(!strcmp(cmdtext, "/sellhouse", true))
+	{
+	    new query[250];
+		mysql_format(mysql, query, sizeof(query), "SELECT `price`, `ID` FROM `houses` WHERE `owner` = '%s", 	player[playerid][pname]);
+		mysql_function_query(mysql, query, true, "SellHouse", "i", playerid);
+		return 1;
+	}
+return 0;
 }
-
+public SellHouse(playerid)
+{
+	new housesid = GetPlayerVirtualWorld(playerid);
+	new query[250];
+	if(housesid >=1)
+	{
+		if(IsPlayerInRangeOfPoint(playerid, 10.0, house[housesid][hx], house[housesid][hy], house[housesid][hz]))
+		{
+		GivePlayerMoney(playerid, house[housesid][price]/2);
+		mysql_format(mysql, query, sizeof(query), "UPDATE `houses` SET `owner` = 'no-one', `lock` = '1'");
+		}
+	}
+	return 1;
+}
 public OnPlayerEnterVehicle(playerid, vehicleid, ispassenger)
 {
 	return 1;
@@ -259,6 +338,38 @@ public OnPlayerObjectMoved(playerid, objectid)
 
 public OnPlayerPickUpPickup(playerid, pickupid)
 {
+	new housesid = GetPlayerVirtualWorld(playerid);
+	if(housesid >=1)
+	{
+		if(IsPlayerInRangeOfPoint(playerid, 2.0, house[housesid][hx], house[housesid][hy], house[housesid][hz]))
+		{
+			SetPlayerPos(playerid, house[housesid][hx], house[housesid][hy], house[housesid][hz]);
+			SetCameraBehindPlayer(playerid);
+			SetPlayerInterior(playerid, 0);
+			SetPlayerVirtualWorld(playerid, 0);
+			return 1;
+		}
+	}
+		else
+	{
+		for(new h = 1; h < MAX_HOUSES; h++) if(IsPlayerInRangeOfPoint(playerid, 2.0, house[h][hx], house[h][hy], house[h][hz]))
+	{
+	if(!strcmp(house[h][owner], "no-one"))
+	{
+		new dialog[256];
+		format(dialog, sizeof(dialog),"Номер дома:\t\t\t%i\nГос.стоимость:\t\t$%\n\nВладелец:\t\t\t%s", h,house[h][price], house[h][hz],house[h][owner]);
+		ShowPlayerDialog(playerid, D_BUYHOUSE, DIALOG_STYLE_MSGBOX, "Дом свободен", dialog, "Купить", "Отмена");
+		return 1;
+	}
+		else
+	{
+		new dialog[256];
+		format(dialog, sizeof(dialog),"Номер дома:\t\t\t%i\nГос.стоимость:\t\t$%\n\nВладелец:\t\t\t%s", h,house[h][price], house[h][hz],house[h][owner]);
+		ShowPlayerDialog(playerid, D_ENTERHOUSE, DIALOG_STYLE_MSGBOX, "Дом занят", dialog, "Войти", "Отмена");
+		return 1;
+	}
+	}
+	}
 	return 1;
 }
 
@@ -543,6 +654,10 @@ public OnDialogResponse(playerid, dialogid, response, listitem, inputtext[])
 			    Kick(playerid);
 			}
 		}
+ 		case(D_BUYHOUSE):
+ 		{
+
+ 		}
 	}
 	return 1;
 }
